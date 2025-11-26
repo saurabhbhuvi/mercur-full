@@ -12,7 +12,7 @@ import { Link, useLocation } from "react-router-dom"
 
 import { HttpTypes } from "@medusajs/types"
 import { RouteFocusModal } from "../../../../../components/modals"
-import { useUpdateProductCategory } from "../../../../../hooks/api/categories"
+import { useCategoryImages, useDeleteCategoryImages } from "../../../../../hooks/api/category-images"
 
 type CategoryMediaGalleryProps = {
   category: HttpTypes.AdminProductCategory
@@ -24,9 +24,10 @@ export const CategoryMediaGallery = ({ category }: CategoryMediaGalleryProps) =>
 
   const { t } = useTranslation()
   const prompt = usePrompt()
-  const { mutateAsync, isPending } = useUpdateProductCategory(category.id)
+  const { data: categoryImages = [] } = useCategoryImages(category.id)
+  const { mutateAsync: deleteImage, isPending } = useDeleteCategoryImages(category.id)
 
-  const media = getMedia(category.metadata)
+  const media = getMedia(categoryImages)
 
   const next = useCallback(() => {
     if (isPending) {
@@ -87,20 +88,11 @@ export const CategoryMediaGallery = ({ category }: CategoryMediaGalleryProps) =>
       return
     }
 
-    const images = (category.metadata?.images as any[]) || []
-    const mediaToKeep = images.filter((i: any) => i.id !== current.id)
-
     if (curr === media.length - 1) {
       setCurr((prev) => prev - 1)
     }
 
-    await mutateAsync({
-      metadata: {
-        ...(category.metadata || {}),
-        images: mediaToKeep,
-        thumbnail: current.isThumbnail ? null : category.metadata?.thumbnail,
-      },
-    })
+    await deleteImage([current.id])
   }
 
   useEffect(() => {
@@ -301,23 +293,12 @@ type Media = {
   isThumbnail: boolean
 }
 
-const getMedia = (metadata: Record<string, unknown> | null | undefined) => {
-  const images = (metadata?.images as any[]) || []
-  const thumbnail = metadata?.thumbnail as string | undefined
-
+const getMedia = (images: any[]) => {
   const media: Media[] = images.map((image) => ({
     id: image.id,
     url: image.url,
-    isThumbnail: image.url === thumbnail,
+    isThumbnail: image.type === "thumbnail",
   }))
-
-  if (thumbnail && !media.some((mediaItem) => mediaItem.isThumbnail)) {
-    media.unshift({
-      id: "thumbnail_only",
-      url: thumbnail,
-      isThumbnail: true,
-    })
-  }
 
   return media
 }

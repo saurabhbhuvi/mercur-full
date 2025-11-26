@@ -23,22 +23,25 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { ThumbnailBadge } from "@medusajs/icons"
 import { HttpTypes } from "@medusajs/types"
 import { Button, Checkbox, clx, CommandBar, toast, Tooltip } from "@medusajs/ui"
-import { Fragment, useCallback, useState } from "react"
+import React, { Fragment, useCallback, useState } from "react"
 import { useFieldArray, useForm } from "react-hook-form"
 import { useTranslation } from "react-i18next"
-import { z } from "zod"
 
 import {
   RouteFocusModal,
   useRouteModal,
 } from "../../../../../components/modals"
 import { KeyboundForm } from "../../../../../components/utilities/keybound-form"
-import { useUpdateProductCategory } from "../../../../../hooks/api/categories"
+import { 
+  useCategoryImages, 
+  useCreateCategoryImages, 
+  useUpdateCategoryImages, 
+  useDeleteCategoryImages 
+} from "../../../../../hooks/api/category-images"
 import { sdk } from "../../../../../lib/client"
 import { UploadCategoryMediaFormItem } from "../upload-category-media-form-item"
 import {
   EditCategoryMediaSchema,
-  MediaSchema,
 } from "../../../category-create/constants"
 import { EditCategoryMediaSchemaType } from "../../../category-create/types"
 
@@ -46,25 +49,37 @@ type CategoryMediaFormProps = {
   category: HttpTypes.AdminProductCategory
 }
 
-type Media = z.infer<typeof MediaSchema>
-
 export const CategoryMediaForm = ({ category }: CategoryMediaFormProps) => {
   const [selection, setSelection] = useState<Record<string, true>>({})
   const { t } = useTranslation()
   const { handleSuccess } = useRouteModal()
 
+  const { data: existingImages = [], isLoading, isError } = useCategoryImages(category.id)
+
+  const createImages = useCreateCategoryImages(category.id)
+  const updateImages = useUpdateCategoryImages(category.id)
+  const deleteImages = useDeleteCategoryImages(category.id)
+
   const form = useForm<EditCategoryMediaSchemaType>({
     defaultValues: {
-      media: getDefaultValues(category.metadata),
+      media: [],
     },
     resolver: zodResolver(EditCategoryMediaSchema),
   })
 
-  const { fields, append, remove, update } = useFieldArray({
+  const { fields, append, remove, update, replace } = useFieldArray({
     name: "media",
     control: form.control,
     keyName: "field_id",
   })
+
+  // Update form when images are loaded
+  React.useEffect(() => {
+    if (!isLoading && existingImages && existingImages.length > 0) {
+      const defaultMedia = getDefaultValues(existingImages)
+      replace(defaultMedia)
+    }
+  }, [existingImages, isLoading, replace])
 
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null)
 
@@ -98,55 +113,88 @@ export const CategoryMediaForm = ({ category }: CategoryMediaFormProps) => {
     setActiveId(null)
   }
 
-  const { mutateAsync, isPending } = useUpdateProductCategory(category.id)
-
   const handleSubmit = form.handleSubmit(async ({ media }) => {
-    const filesToUpload = media
-      .map((m, i) => ({ file: m.file, index: i }))
-      .filter((m) => !!m.file)
+    try {
+      // 1. Handle file uploads for new images
+      const filesToUpload = media
+        .map((m, i) => ({ file: m.file, index: i }))
+        .filter((m) => !!m.file)
 
-    let uploaded: HttpTypes.AdminFile[] = []
+      let uploaded: HttpTypes.AdminFile[] = []
 
-    if (filesToUpload.length) {
-      const { files: uploads } = await sdk.admin.upload
-        .create({ files: filesToUpload.map((m) => m.file) })
-        .catch(() => {
-          form.setError("media", {
-            type: "invalid_file",
-            message: "Failed to upload media files",
+      if (filesToUpload.length) {
+        try {
+          const { files: uploads } = await sdk.admin.upload.create({ 
+            files: filesToUpload.map((m) => m.file) 
           })
-          return { files: [] }
-        })
-      uploaded = uploads
+          uploaded = uploads
+        } catch (error) {
+          toast.error("Failed to upload media files")
+          return
+        }
+      }
+
+      // 2. Prepare images for database operations
+      const withUpdatedUrls = media.map((entry, i) => {
+        const toUploadIndex = filesToUpload.findIndex((m) => m.index === i)
+        if (toUploadIndex > -1) {
+          const uploadedFile = uploaded[toUploadIndex]
+          if (!uploadedFile?.url) {
+            return null // Skip if upload failed
+          }
+          return { 
+            ...entry, 
+            url: uploadedFile.url,
+            file_id: uploadedFile.id || uploadedFile.url.split('/').pop() || ""
+          }
+        }
+        return { ...entry, file_id: entry.id || entry.url?.split('/').pop() || "" }
+      }).filter(Boolean) as Array<typeof media[0] & { file_id: string }>
+
+      // 3. Determine which images are new, updated, or deleted
+      const existingIds = existingImages.map((img: any) => img.id)
+      const currentIds = withUpdatedUrls.map((m) => m.id).filter(Boolean)
+      
+      const toCreate = withUpdatedUrls.filter((m) => !m.id || !existingIds.includes(m.id))
+      const toUpdate = withUpdatedUrls.filter((m) => {
+        if (!m.id || !existingIds.includes(m.id)) return false
+        const existing = existingImages.find((img: any) => img.id === m.id)
+        return existing?.type !== (m.isThumbnail ? "thumbnail" : "image")
+      })
+      const toDeleteIds = existingIds.filter((id: string) => !currentIds.includes(id))
+
+      // 4. Execute database operations
+      if (toCreate.length > 0) {
+        const validImages = toCreate.filter((m) => m.url && m.file_id)
+        if (validImages.length > 0) {
+          await createImages.mutateAsync(
+            validImages.map((m) => ({
+              url: m.url,
+              type: m.isThumbnail ? "thumbnail" : "image",
+              file_id: m.file_id,
+            }))
+          )
+        }
+      }
+
+      if (toUpdate.length > 0) {
+        await updateImages.mutateAsync(
+          toUpdate.map((m) => ({
+            id: m.id!,
+            type: m.isThumbnail ? "thumbnail" : "image",
+          }))
+        )
+      }
+
+      if (toDeleteIds.length > 0) {
+        await deleteImages.mutateAsync(toDeleteIds)
+      }
+
+      toast.success("Category media updated successfully")
+      handleSuccess()
+    } catch (error: any) {
+      toast.error(error.message || "Failed to update category media")
     }
-
-    const withUpdatedUrls = media.map((entry, i) => {
-      const toUploadIndex = filesToUpload.findIndex((m) => m.index === i)
-      if (toUploadIndex > -1) {
-        return { ...entry, url: uploaded[toUploadIndex]?.url }
-      }
-      return entry
-    })
-    const thumbnail = withUpdatedUrls.find((m) => m.isThumbnail)?.url
-
-    await mutateAsync(
-      {
-        metadata: {
-          ...(category.metadata || {}),
-          images: withUpdatedUrls.map((file) => ({ url: file.url, id: file.id })),
-          thumbnail: thumbnail || null,
-        },
-      },
-      {
-        onSuccess: () => {
-          toast.success("Category media updated successfully")
-          handleSuccess()
-        },
-        onError: (error) => {
-          toast.error(error.message)
-        },
-      }
-    )
   })
 
   const handleCheckedChange = useCallback(
@@ -198,6 +246,28 @@ export const CategoryMediaForm = ({ category }: CategoryMediaFormProps) => {
   }
 
   const selectionCount = Object.keys(selection).length
+
+  if (isLoading) {
+    return (
+      <RouteFocusModal>
+        <RouteFocusModal.Header />
+        <RouteFocusModal.Body className="flex items-center justify-center">
+          <div className="text-ui-fg-subtle">Loading images...</div>
+        </RouteFocusModal.Body>
+      </RouteFocusModal>
+    )
+  }
+
+  if (isError) {
+    return (
+      <RouteFocusModal>
+        <RouteFocusModal.Header />
+        <RouteFocusModal.Body className="flex items-center justify-center">
+          <div className="text-ui-fg-error">Failed to load images. Please try again.</div>
+        </RouteFocusModal.Body>
+      </RouteFocusModal>
+    )
+  }
 
   return (
     <RouteFocusModal.Form blockSearchParams form={form}>
@@ -263,7 +333,7 @@ export const CategoryMediaForm = ({ category }: CategoryMediaFormProps) => {
               <Fragment>
                 <CommandBar.Command
                   action={handlePromoteToThumbnail}
-                  label="Make Thumbnail"
+                  label={t("products.media.makeThumbnail")}
                   shortcut="t"
                 />
                 <CommandBar.Seperator />
@@ -283,7 +353,11 @@ export const CategoryMediaForm = ({ category }: CategoryMediaFormProps) => {
                 {t("actions.cancel")}
               </Button>
             </RouteFocusModal.Close>
-            <Button size="small" type="submit" isLoading={isPending}>
+            <Button 
+              size="small" 
+              type="submit" 
+              isLoading={createImages.isPending || updateImages.isPending || deleteImages.isPending}
+            >
               {t("actions.save")}
             </Button>
           </div>
@@ -293,30 +367,13 @@ export const CategoryMediaForm = ({ category }: CategoryMediaFormProps) => {
   )
 }
 
-const getDefaultValues = (metadata: Record<string, unknown> | null | undefined) => {
-  const images = (metadata?.images as any[]) || []
-  const thumbnail = metadata?.thumbnail as string | undefined
-
-  const media: Media[] =
-    images?.map((image) => ({
-      id: image.id!,
-      url: image.url!,
-      isThumbnail: image.url === thumbnail,
-      file: null,
-    })) || []
-
-  if (thumbnail && !media.some((mediaItem) => mediaItem.url === thumbnail)) {
-    const id = Math.random().toString(36).substring(7)
-
-    media.unshift({
-      id: id,
-      url: thumbnail,
-      isThumbnail: true,
-      file: null,
-    })
-  }
-
-  return media
+const getDefaultValues = (images: any[]) => {
+  return images.map((image) => ({
+    id: image.id,
+    url: image.url,
+    isThumbnail: image.type === "thumbnail",
+    file: null,
+  }))
 }
 
 interface MediaView {
@@ -324,6 +381,7 @@ interface MediaView {
   field_id: string
   url: string
   isThumbnail: boolean
+  file_id?: string
 }
 
 const dropAnimationConfig: DropAnimation = {
@@ -347,6 +405,8 @@ const MediaGridItem = ({
   checked,
   onCheckedChange,
 }: MediaGridItemProps) => {
+  const { t } = useTranslation()
+  
   const handleToggle = useCallback(
     (value: boolean) => {
       onCheckedChange(value)
@@ -380,7 +440,7 @@ const MediaGridItem = ({
     >
       {media.isThumbnail && (
         <div className="absolute left-2 top-2">
-          <Tooltip content="Thumbnail">
+          <Tooltip content={t("fields.thumbnail")}>
             <ThumbnailBadge />
           </Tooltip>
         </div>

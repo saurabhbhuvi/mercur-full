@@ -1,82 +1,82 @@
-import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
-import { Modules } from "@medusajs/framework/utils";
-import type { IProductModuleService } from "@medusajs/framework/types";
+import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
+import { createCategoryImagesWorkflow } from "../../../../../workflows/create-category-images"
+import { z } from "zod"
+
+export const CreateCategoryImagesSchema = z.object({
+  images: z.array(
+    z.object({
+      type: z.enum(["thumbnail", "image"]),
+      url: z.string(),
+      file_id: z.string(),
+    })
+  ).min(1, "At least one image is required"),
+})
+
+type CreateCategoryImagesInput = z.infer<typeof CreateCategoryImagesSchema>
 
 export async function POST(
-  req: MedusaRequest,
+  req: MedusaRequest<CreateCategoryImagesInput>,
   res: MedusaResponse
-) {
-  const categoryId = req.params.id;
-  
+): Promise<void> {
   try {
-    const productModuleService: IProductModuleService = req.scope.resolve(Modules.PRODUCT);
-    
-    // Get the category
-    const category = await productModuleService.retrieveProductCategory(categoryId);
-    
-    if (!category) {
-      return res.status(404).json({ message: "Category not found" });
-    }
-    
-    // Get images from request body
-    const { images, thumbnail } = req.body as { images?: any[]; thumbnail?: string };
-    
-    // Update category metadata with images
-    const metadata = category.metadata || {};
-    const updatedCategory = await productModuleService.updateProductCategories(categoryId, {
-      metadata: {
-        ...metadata,
-        images: images || (metadata.images as any[]) || [],
-        thumbnail: thumbnail || (metadata.thumbnail as string) || null,
-      }
-    });
-    
-    res.json({ category: updatedCategory });
-  } catch (error: any) {
-    res.status(400).json({ 
-      message: error.message || "Failed to upload images" 
-    });
+    const { id: categoryId } = req.params
+    const { images } = req.validatedBody
+
+    console.log("POST /admin/product-categories/:id/images - categoryId:", categoryId)
+    console.log("POST /admin/product-categories/:id/images - images:", images)
+
+    // Add category_id to each image
+    const category_images = images.map((image) => ({
+      ...image,
+      category_id: categoryId,
+    }))
+
+    console.log("POST /admin/product-categories/:id/images - category_images:", category_images)
+
+    const { result } = await createCategoryImagesWorkflow(req.scope).run({
+      input: {
+        category_images,
+      },
+    })
+
+    console.log("POST /admin/product-categories/:id/images - result:", result)
+
+    res.status(200).json({ category_images: result })
+  } catch (error) {
+    console.error("POST /admin/product-categories/:id/images - ERROR:", error)
+    res.status(500).json({ 
+      message: "Failed to create category images",
+      error: error instanceof Error ? error.message : String(error)
+    })
   }
 }
 
-export async function DELETE(
+export async function GET(
   req: MedusaRequest,
   res: MedusaResponse
-) {
-  const categoryId = req.params.id;
-  
+): Promise<void> {
   try {
-    const productModuleService: IProductModuleService = req.scope.resolve(Modules.PRODUCT);
-    
-    // Get the category
-    const category = await productModuleService.retrieveProductCategory(categoryId);
-    
-    if (!category) {
-      return res.status(404).json({ message: "Category not found" });
-    }
-    
-    // Get image IDs to delete from query params
-    const { ids } = req.query;
-    const idsToDelete = Array.isArray(ids) ? ids : [ids];
-    
-    // Update category metadata by removing specified images
-    const metadata = category.metadata || {};
-    const currentImages = (metadata.images as any[]) || [];
-    const updatedImages = currentImages.filter((img: any) => 
-      !idsToDelete.includes(img.id)
-    );
-    
-    const updatedCategory = await productModuleService.updateProductCategories(categoryId, {
-      metadata: {
-        ...metadata,
-        images: updatedImages,
-      }
-    });
-    
-    res.json({ category: updatedCategory });
-  } catch (error: any) {
-    res.status(400).json({ 
-      message: error.message || "Failed to delete images" 
-    });
+    const { id: categoryId } = req.params
+    const query = req.scope.resolve("query")
+
+    console.log("GET /admin/product-categories/:id/images - categoryId:", categoryId)
+
+    const { data: categoryImages } = await query.graph({
+      entity: "product_category_image",
+      fields: ["*"],
+      filters: {
+        category_id: categoryId,
+      },
+    })
+
+    console.log("GET /admin/product-categories/:id/images - categoryImages:", categoryImages)
+
+    res.status(200).json({ category_images: categoryImages })
+  } catch (error) {
+    console.error("GET /admin/product-categories/:id/images - ERROR:", error)
+    res.status(500).json({ 
+      message: "Failed to fetch category images",
+      error: error instanceof Error ? error.message : String(error)
+    })
   }
 }

@@ -50,6 +50,12 @@ module.exports = defineConfig({
   ],
   modules: [
     {
+      resolve: "./src/modules/category-image",
+    },
+    // Cloud storage disabled - using local storage
+    // Supabase Storage S3 API is not fully compatible with Medusa
+    
+    {
       resolve: '@medusajs/medusa/payment',
       options: {
         providers: [

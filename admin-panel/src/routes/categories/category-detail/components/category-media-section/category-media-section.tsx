@@ -4,6 +4,7 @@ import { Container, Heading, Tooltip } from "@medusajs/ui"
 import { useTranslation } from "react-i18next"
 import { Link } from "react-router-dom"
 import { ActionMenu } from "../../../../../components/common/action-menu"
+import { useCategoryImages } from "../../../../../hooks/api/category-images"
 
 type CategoryMediaSectionProps = {
   category: HttpTypes.AdminProductCategory
@@ -13,10 +14,9 @@ export const CategoryMediaSection = ({
   category,
 }: CategoryMediaSectionProps) => {
   const { t } = useTranslation()
-  const images = (category.metadata?.images as any[]) || []
-  const thumbnail = category.metadata?.thumbnail as string | undefined
+  const { data: images = [] } = useCategoryImages(category.id)
 
-  const hasMedia = images.length > 0 || thumbnail
+  const hasMedia = images.length > 0
 
   return (
     <Container className="divide-y p-0">
@@ -49,14 +49,14 @@ export const CategoryMediaSection = ({
                 key={image.id || index}
                 className="shadow-elevation-card-rest hover:shadow-elevation-card-hover transition-fg group relative aspect-square size-full cursor-pointer overflow-hidden rounded-lg"
               >
-                {image.url === thumbnail && (
-                  <div className="absolute top-2 left-2 z-10">
-                    <Tooltip content={t("fields.thumbnail")}>
-                      <ThumbnailBadge />
-                    </Tooltip>
-                  </div>
-                )}
                 <Link to="media" state={{ curr: index }}>
+                  {image.type === "thumbnail" && (
+                    <div className="absolute top-2 left-2 z-10">
+                      <Tooltip content={t("fields.thumbnail")}>
+                        <ThumbnailBadge />
+                      </Tooltip>
+                    </div>
+                  )}
                   <img
                     src={image.url}
                     alt={`${category.name} ${index + 1}`}
@@ -65,22 +65,6 @@ export const CategoryMediaSection = ({
                 </Link>
               </div>
             ))}
-            {thumbnail && !images.some((img: any) => img.url === thumbnail) && (
-              <div className="shadow-elevation-card-rest hover:shadow-elevation-card-hover transition-fg group relative aspect-square size-full cursor-pointer overflow-hidden rounded-lg">
-                <div className="absolute top-2 left-2 z-10">
-                  <Tooltip content={t("fields.thumbnail")}>
-                    <ThumbnailBadge />
-                  </Tooltip>
-                </div>
-                <Link to="media" state={{ curr: 0 }}>
-                  <img
-                    src={thumbnail}
-                    alt={category.name}
-                    className="h-full w-full object-cover"
-                  />
-                </Link>
-              </div>
-            )}
           </div>
         )}
       </div>
