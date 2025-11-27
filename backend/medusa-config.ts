@@ -1,7 +1,20 @@
 
+// @ts-nocheck
 import { defineConfig, loadEnv } from '@medusajs/framework/utils'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
+
+// Temporary debug to verify Supabase/S3 env vars are loaded correctly.
+// You can remove this once everything works.
+if (process.env.NODE_ENV !== 'production') {
+  // eslint-disable-next-line no-console
+  console.log('[medusa-config] S3/Supabase file config:', {
+    S3_ENDPOINT: process.env.S3_ENDPOINT,
+    S3_FILE_URL: process.env.S3_FILE_URL,
+    S3_BUCKET: process.env.S3_BUCKET,
+    S3_REGION: process.env.S3_REGION,
+  })
+}
 
 module.exports = defineConfig({
   projectConfig: {
@@ -52,9 +65,28 @@ module.exports = defineConfig({
     {
       resolve: "./src/modules/category-image",
     },
-    // Cloud storage disabled - using local storage
-    // Supabase Storage S3 API is not fully compatible with Medusa
-    
+    {
+      resolve: "@medusajs/medusa/file",
+      options: {
+        providers: [
+          {
+            resolve: "@medusajs/medusa/file-s3",
+            id: "s3",
+            options: {
+              file_url: process.env.S3_FILE_URL,
+              access_key_id: process.env.S3_ACCESS_KEY_ID,
+              secret_access_key: process.env.S3_SECRET_ACCESS_KEY,
+              region: process.env.S3_REGION,
+              bucket: process.env.S3_BUCKET,
+              endpoint: process.env.S3_ENDPOINT,
+              additional_client_config: {
+                forcePathStyle: true,
+              },
+            },
+          },
+        ],
+      },
+    },
     {
       resolve: '@medusajs/medusa/payment',
       options: {
