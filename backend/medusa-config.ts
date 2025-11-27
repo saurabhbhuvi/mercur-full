@@ -9,10 +9,10 @@ loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 if (process.env.NODE_ENV !== 'production') {
   // eslint-disable-next-line no-console
   console.log('[medusa-config] S3/Supabase file config:', {
-    S3_ENDPOINT: process.env.S3_ENDPOINT,
-    S3_FILE_URL: process.env.S3_FILE_URL,
-    S3_BUCKET: process.env.S3_BUCKET,
-    S3_REGION: process.env.S3_REGION,
+    AWS_ENDPOINT: process.env.AWS_ENDPOINT,
+    AWS_FILE_URL: process.env.AWS_FILE_URL,
+    AWS_BUCKET: process.env.AWS_BUCKET,
+    AWS_REGION: process.env.AWS_REGION,
   })
 }
 
@@ -41,13 +41,13 @@ module.exports = defineConfig({
       resolve: '@mercurjs/commission',
       options: {}
     },
-    {
-      resolve: '@mercurjs/algolia',
-      options: {
-        apiKey: process.env.ALGOLIA_API_KEY,
-        appId: process.env.ALGOLIA_APP_ID
-      }
-    },
+    // {
+    //   resolve: '@mercurjs/algolia',
+    //   options: {
+    //     apiKey: process.env.ALGOLIA_API_KEY,
+    //     appId: process.env.ALGOLIA_APP_ID
+    //   }
+    // },
     {
       resolve: '@mercurjs/reviews',
       options: {}
@@ -69,21 +69,28 @@ module.exports = defineConfig({
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [
-          {
-            resolve: "@medusajs/medusa/file-s3",
-            id: "s3",
-            options: {
-              file_url: process.env.S3_FILE_URL,
-              access_key_id: process.env.S3_ACCESS_KEY_ID,
-              secret_access_key: process.env.S3_SECRET_ACCESS_KEY,
-              region: process.env.S3_REGION,
-              bucket: process.env.S3_BUCKET,
-              endpoint: process.env.S3_ENDPOINT,
-              additional_client_config: {
-                forcePathStyle: true,
-              },
-            },
-          },
+          // Use S3 if credentials are provided, otherwise fall back to local
+          ...(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+            ? [{
+                resolve: "@medusajs/medusa/file-s3",
+                id: "s3",
+                options: {
+                  file_url: process.env.AWS_FILE_URL,
+                  access_key_id: process.env.AWS_ACCESS_KEY_ID,
+                  secret_access_key: process.env.AWS_SECRET_ACCESS_KEY,
+                  region: process.env.AWS_REGION,
+                  bucket: process.env.AWS_BUCKET,
+                  endpoint: process.env.AWS_ENDPOINT,
+                },
+              }]
+            : [{
+                resolve: "@medusajs/medusa/file-local",
+                id: "local",
+                options: {
+                  upload_dir: "uploads",
+                  backend_url: process.env.MEDUSA_BACKEND_URL || "http://localhost:9000",
+                },
+              }]),
         ],
       },
     },
